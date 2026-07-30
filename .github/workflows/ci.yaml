@@ -9,7 +9,7 @@ on:
 jobs:
   lint_and_test:
     name: Linting and Testing
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       matrix:
         python-version: [ 3.7, 3.8, 3.9 ]
@@ -34,7 +34,7 @@ jobs:
 
   integration_test:
     name: Integration Testing
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     environment: ci_tests
     strategy:
       matrix:
