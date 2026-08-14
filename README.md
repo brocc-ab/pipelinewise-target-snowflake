@@ -106,6 +106,34 @@ GRANT ROLE ppw_target_snowflake TO USER {user};
 
 Replace `warehouse` between `{` and `}` characters to the actual values from point 3.
 
+Alternatively you can use [key pair authentication](https://docs.snowflake.com/en/user-guide/key-pair-auth) instead of a password.
+Generate an RSA key pair and assign the public key to the user:
+
+```bash
+# Encrypted private key (recommended), you will be prompted for a passphrase
+openssl genrsa 2048 | openssl pkcs8 -topk8 -v2 aes-256-cbc -inform PEM -out snowflake_key.p8
+
+# ...or an unencrypted private key
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out snowflake_key.p8 -nocrypt
+
+# Extract the public key
+openssl rsa -in snowflake_key.p8 -pubout -out snowflake_key.pub
+```
+
+```
+CREATE OR REPLACE USER {user}
+DEFAULT_ROLE = ppw_target_snowflake
+DEFAULT_WAREHOUSE = '{warehouse}';
+
+-- Public key without the -----BEGIN PUBLIC KEY----- / -----END PUBLIC KEY----- lines
+ALTER USER {user} SET RSA_PUBLIC_KEY = '{public_key}';
+
+GRANT ROLE ppw_target_snowflake TO USER {user};
+```
+
+Then use `private_key_path` (or `private_key`) and `private_key_passphrase` instead of `password`
+in `config.json`. Details below in the Configuration settings section.
+
 4. **Optional external stage**:
 
 By default [table stages](https://docs.snowflake.com/en/user-guide/data-load-local-file-system-create-stage.html#table-stages) are used to load data into snowflake tables. If you want to use external stages with s3 or s3 compatible storage engines then you need to create a STAGE object:
@@ -143,6 +171,22 @@ Running the the target connector requires a `config.json` file. Example with the
    }
    ```
 
+The same with key pair authentication instead of a password:
+
+   ```json
+   {
+
+     "account": "rtxxxxx.eu-central-1",
+     "dbname": "database_name",
+     "user": "my_user",
+     "private_key_path": "/path/to/snowflake_key.p8",
+     "private_key_passphrase": "my_passphrase",
+     "warehouse": "my_virtual_warehouse",
+     "file_format": "snowflake_file_format_object_name",
+     "default_target_schema": "my_target_schema"
+   }
+   ```
+
 Full list of options in `config.json`:
 
 | Property                            | Type    | Required?  | Description                                                   |
@@ -150,7 +194,10 @@ Full list of options in `config.json`:
 | account                             | String  | Yes        | Snowflake account name (i.e. rtXXXXX.eu-central-1)            |
 | dbname                              | String  | Yes        | Snowflake Database name                                       |
 | user                                | String  | Yes        | Snowflake User                                                |
-| password                            | String  | Yes        | Snowflake Password                                            |
+| password                            | String  | No         | Snowflake Password. Required unless key pair authentication is used with `private_key_path` or `private_key` |
+| private_key_path                    | String  | No         | Path to a PEM encoded (PKCS#8) RSA private key file used for [key pair authentication](https://docs.snowflake.com/en/user-guide/key-pair-auth). Takes precedence over `private_key` |
+| private_key                         | String  | No         | The PEM encoded (PKCS#8) RSA private key itself, as an alternative to `private_key_path` when the key comes from a secret store rather than a file |
+| private_key_passphrase              | String  | No         | Passphrase of the private key. Required only if the private key is encrypted |
 | warehouse                           | String  | Yes        | Snowflake virtual warehouse name                              |
 | role                                | String  | No         | Snowflake role to use. If not defined then the user's default role will be used |
 | aws_access_key_id                   | String  | No         | S3 Access Key Id. If not provided, `AWS_ACCESS_KEY_ID` environment variable or IAM role will be used |
@@ -195,6 +242,11 @@ Full list of options in `config.json`:
   export TARGET_SNOWFLAKE_USER=<snowflake-user>
   export TARGET_SNOWFLAKE_PASSWORD=<snowflake-password>
   export TARGET_SNOWFLAKE_WAREHOUSE=<snowflake-warehouse>
+
+  # Optional, to run the tests with key pair authentication instead of a password
+  export TARGET_SNOWFLAKE_PRIVATE_KEY_PATH=<path-to-pem-encoded-private-key>
+  export TARGET_SNOWFLAKE_PRIVATE_KEY=<pem-encoded-private-key>
+  export TARGET_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=<private-key-passphrase>
   export TARGET_SNOWFLAKE_SCHEMA=<snowflake-schema>
   export TARGET_SNOWFLAKE_AWS_ACCESS_KEY=<aws-access-key-id>
   export TARGET_SNOWFLAKE_AWS_SECRET_ACCESS_KEY=<aws-access-secret-access-key>

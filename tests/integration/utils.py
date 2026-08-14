@@ -19,6 +19,12 @@ def get_db_config():
     config['user'] = os.environ.get('TARGET_SNOWFLAKE_USER')
     config['password'] = os.environ.get('TARGET_SNOWFLAKE_PASSWORD')
     config['warehouse'] = os.environ.get('TARGET_SNOWFLAKE_WAREHOUSE')
+
+    # Optional key pair authentication. When defined then it's used instead of the password
+    config['private_key_path'] = os.environ.get('TARGET_SNOWFLAKE_PRIVATE_KEY_PATH')
+    config['private_key'] = os.environ.get('TARGET_SNOWFLAKE_PRIVATE_KEY')
+    config['private_key_passphrase'] = os.environ.get('TARGET_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE')
+
     config['default_target_schema'] = os.environ.get("TARGET_SNOWFLAKE_SCHEMA")
     config['stage'] = os.environ.get("TARGET_SNOWFLAKE_STAGE")
     config['file_format'] = os.environ.get("TARGET_SNOWFLAKE_FILE_FORMAT_CSV")
