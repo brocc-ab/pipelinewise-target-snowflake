@@ -5,6 +5,8 @@ import re
 import time
 
 from typing import List, Dict, Union, Tuple, Set
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 from singer import get_logger
 from target_snowflake import flattening
 from target_snowflake import stream_utils
@@ -15,6 +17,15 @@ from target_snowflake.upload_clients.s3_upload_client import S3UploadClient
 from target_snowflake.upload_clients.snowflake_upload_client import SnowflakeUploadClient
 
 
+# Config keys that define an authentication method. At least one of them has to be set,
+# either a password or a private key for key pair authentication
+AUTHENTICATION_CONFIG_KEYS = [
+    'password',
+    'private_key_path',
+    'private_key'
+]
+
+
 def validate_config(config):
     """Validate configuration"""
     errors = []
@@ -22,7 +33,6 @@ def validate_config(config):
         'account',
         'dbname',
         'user',
-        'password',
         'warehouse',
         's3_bucket',
         'stage',
@@ -33,7 +43,6 @@ def validate_config(config):
         'account',
         'dbname',
         'user',
-        'password',
         'warehouse',
         'file_format'
     ]
@@ -56,6 +65,11 @@ def validate_config(config):
         if not config.get(k, None):
             errors.append(f"Required key is missing from config: [{k}]")
 
+    # Check if at least one authentication method is configured
+    if not any(config.get(k, None) for k in AUTHENTICATION_CONFIG_KEYS):
+        errors.append('Required authentication key is missing from config. '
+                      f"Existing methods: {', '.join(AUTHENTICATION_CONFIG_KEYS)}")
+
     # Check target schema config
     config_default_target_schema = config.get('default_target_schema', None)
     config_schema_mapping = config.get('schema_mapping', None)
@@ -68,6 +82,37 @@ def validate_config(config):
         errors.append('Archive load files option can be used only with external s3 stages. Please define s3_bucket.')
 
     return errors
+
+
+def get_private_key(config):
+    """Take the connection config and return the DER encoded private key used by
+    snowflake key pair authentication.
+
+    The PEM encoded key can be defined either as a path to a file (private_key_path) or
+    inline as the content of the key itself (private_key). Encrypted keys need the
+    private_key_passphrase key to be set as well.
+
+    Returns None if key pair authentication is not configured."""
+    if config.get('private_key_path'):
+        with open(config['private_key_path'], 'rb') as key_file:
+            pem_key = key_file.read()
+    elif config.get('private_key'):
+        pem_key = config['private_key']
+        if isinstance(pem_key, str):
+            pem_key = pem_key.encode()
+    else:
+        return None
+
+    passphrase = config.get('private_key_passphrase')
+    encoded_passphrase = passphrase.encode() if passphrase else None
+
+    private_key = serialization.load_pem_private_key(pem_key,
+                                                     password=encoded_passphrase,
+                                                     backend=default_backend())
+
+    return private_key.private_bytes(encoding=serialization.Encoding.DER,
+                                     format=serialization.PrivateFormat.PKCS8,
+                                     encryption_algorithm=serialization.NoEncryption())
 
 
 def column_type(schema_property):
@@ -204,6 +249,14 @@ class DbSync:
             self.logger.error('Invalid configuration:\n   * %s', '\n   * '.join(config_errors))
             sys.exit(1)
 
+        # Load the private key once at startup rather than at every connection attempt,
+        # this also fails fast if the key or the passphrase is invalid
+        try:
+            self.private_key = get_private_key(self.connection_config)
+        except Exception as exc:
+            self.logger.error('Cannot load private key for key pair authentication: %s', exc)
+            sys.exit(1)
+
         if self.connection_config.get('stage', None):
             stage = stream_utils.stream_name_to_dict(self.connection_config['stage'], separator='.')
             if not stage['schema_name']:
@@ -293,7 +346,8 @@ class DbSync:
 
         return snowflake.connector.connect(
             user=self.connection_config['user'],
-            password=self.connection_config['password'],
+            password=self.connection_config.get('password', None),
+            private_key=self.private_key,
             account=self.connection_config['account'],
             database=self.connection_config['dbname'],
             warehouse=self.connection_config['warehouse'],
